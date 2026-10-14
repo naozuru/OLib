@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div id="banner"></div>
+        <section class="stats" id="stats" aria-label="Summary"></section>
+        <div class="cols">
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Overdue books</h2>
+              <a class="link" href="loans.html?filter=late">View all</a>
+            </div>
+            <div id="lateList"></div>
+          </section>
+          <section class="panel">
+            <div class="panel-head">
+              <h2>Recent loans</h2>
+              <a class="link" href="loans.html">View all</a>
+            </div>
+            <div id="recentList"></div>
+          </section>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('dashboard', 'Dashboard');
+      var $ = function (id) { return document.getElementById(id); };
+
+      // Reminder when the default password is still in use
+      try {
+        if (sessionStorage.getItem('lib_default_pw') === '1') {
+          $('banner').innerHTML = '<div class="notice warn">' + UI.icon('shield-alert', 22) +
+            '<span>You are still using the default password. Change it now to keep the admin account safe.</span>' +
+            '<a class="link" href="settings.html">Change password</a></div>';
+        }
+      } catch (e) { /* ignore */ }
+
+      function stat(ic, value, label, opts) {
+        opts = opts || {};
+        var inner = '<span class="stat-ic">' + UI.icon(ic, 24) + '</span><div><b>' + value + '</b><span>' + label + '</span></div>';
+        var cls = 'stat' + (opts.alert ? ' alert' : '');
+        return opts.href ? '<a class="' + cls + '" href="' + opts.href + '">' + inner + '</a>' : '<div class="' + cls + '">' + inner + '</div>';
+      }
+
+      function row(l) {
+        return '<div class="row"><div class="grow"><b>' + UI.esc(l.nama || '(deleted student)') + '</b>' +
+          '<small>' + UI.esc(l.judul) + (l.kelas ? ', ' + UI.esc(l.kelas) : '') + '</small></div>' + UI.loanBadge(l) + '</div>';
+      }
+
+      function skeleton() {
+        $('stats').innerHTML = new Array(9).join('<div class="skeleton" style="height:84px;border-radius:14px"></div>');
+        $('lateList').innerHTML = $('recentList').innerHTML =
+          '<div class="skeleton" style="height:56px;margin-bottom:8px"></div><div class="skeleton" style="height:56px"></div>';
+      }
+
+      async function load() {
+        skeleton();
+        try {
+          var d = await API.post('dashboard');
+          $('stats').innerHTML =
+            stat('book-marked', d.borrowed_now, 'Borrowed now', { href: 'loans.html' }) +
+            stat('calendar-clock', d.due_today, 'Due today') +
+            stat('hourglass', d.due_soon, 'Due soon') +
+            stat('triangle-alert', d.overdue, 'Overdue', { alert: d.overdue > 0, href: 'loans.html?filter=late' }) +
+            stat('bookmark-check', d.reservations_ready, 'Reservations ready for pickup', { href: 'reservations.html' }) +
+            stat('bookmark', d.reservations_waiting, 'Waiting in queue', { href: 'reservations.html' }) +
+            stat('library', d.total_judul, 'Book titles (' + d.total_eksemplar + ' copies)', { href: 'books.html' }) +
+            stat('users', d.total_anggota, 'Active students', { href: 'members.html' });
+
+          $('lateList').innerHTML = d.top_overdue.length
+            ? d.top_overdue.map(row).join('')
+            : '<p class="empty-note">Nothing is overdue. All loans are within the due date.</p>';
+          $('recentList').innerHTML = d.recent_loans.length
+            ? d.recent_loans.map(row).join('')
+            : '<p class="empty-note">No loans recorded yet.</p>';
+        } catch (e) {
+          $('stats').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The dashboard could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('lateList').innerHTML = $('recentList').innerHTML = '';
+          $('retry').onclick = load;
+        }
+      }
+      load();
+    })();
+  </script>
+</body>
+</html>

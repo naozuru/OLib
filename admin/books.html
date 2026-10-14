@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Books - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="admin-toolbar">
+          <div class="input-icon grow">
+            <iconify-icon icon="lucide:search" width="18" height="18" aria-hidden="true"></iconify-icon>
+            <input class="input" id="q" type="search" placeholder="Search by title, author or ISBN" aria-label="Search books">
+          </div>
+          <select class="input" id="kat" aria-label="Category filter"><option value="">All categories</option></select>
+          <button class="btn btn-outline" id="importBtn" type="button">
+            <iconify-icon icon="lucide:upload" width="18" height="18" aria-hidden="true"></iconify-icon>Import CSV
+          </button>
+          <button class="btn btn-primary" id="addBtn" type="button">Add book</button>
+        </div>
+
+        <div class="table-card">
+          <div class="table-scroll">
+            <table class="tbl">
+              <thead>
+                <tr><th>Book</th><th>Category</th><th>ISBN</th><th>Copies</th><th class="num">Actions</th></tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div id="empty"></div>
+          <div class="table-foot" id="foot">
+            <span id="info"></span>
+            <div class="pager">
+              <button class="icon-btn" id="prev" type="button" aria-label="Previous page"><iconify-icon icon="lucide:chevron-left" width="18" height="18" aria-hidden="true"></iconify-icon></button>
+              <span id="pageLabel"></span>
+              <button class="icon-btn" id="next" type="button" aria-label="Next page"><iconify-icon icon="lucide:chevron-right" width="18" height="18" aria-hidden="true"></iconify-icon></button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+  <datalist id="catList"></datalist>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('books', 'Manage Books');
+
+      var $ = function (id) { return document.getElementById(id); };
+      var PER = 20;
+      var books = [], page = 1, q = '', kat = '', loading = true, moreLoading = false;
+
+      function byTitle(a, b) { return String(a.judul).localeCompare(String(b.judul)); }
+
+      function filtered() {
+        var s = q.toLowerCase();
+        return books.filter(function (b) {
+          if (kat && b.kategori !== kat) return false;
+          if (!s) return true;
+          return [b.judul, b.penulis, b.isbn, b.kategori].join(' ').toLowerCase().indexOf(s) > -1;
+        });
+      }
+
+      function categories() {
+        var set = {};
+        books.forEach(function (b) { if (b.kategori) set[b.kategori] = true; });
+        return Object.keys(set).sort();
+      }
+
+      function renderCategories() {
+        var cats = categories();
+        $('kat').innerHTML = '<option value="">All categories</option>' + cats.map(function (c) {
+          return '<option value="' + UI.esc(c) + '"' + (c === kat ? ' selected' : '') + '>' + UI.esc(c) + '</option>';
+        }).join('');
+        $('catList').innerHTML = cats.map(function (c) { return '<option value="' + UI.esc(c) + '">'; }).join('');
+      }
+
+      function render() {
+        var list = filtered();
+        var pages = Math.max(1, Math.ceil(list.length / PER));
+        if (page > pages) page = pages;
+        var slice = list.slice((page - 1) * PER, page * PER);
+
+        $('rows').innerHTML = slice.map(function (b) {
+          var free = Number(b.stok_tersedia) > 0;
+          var id = UI.esc(b.id), t = UI.esc(b.judul);
+          return '<tr><td><div class="cell-book">' + UI.cover(b, 'sm') + '<div><b>' + t + '</b><small>' +
+            UI.esc(b.penulis || 'Unknown author') + '</small></div></div></td>' +
+            '<td>' + (b.kategori ? UI.esc(b.kategori) : '-') + '</td>' +
+            '<td>' + (b.isbn ? UI.esc(b.isbn) : '-') + '</td>' +
+            '<td><span class="badge ' + (free ? 'ok' : 'bad') + '">' + b.stok_tersedia + ' of ' + b.stok_total + ' free</span></td>' +
+            '<td><div class="actions">' +
+              '<button class="icon-btn" type="button" data-act="hist" data-id="' + id + '" title="History" aria-label="History of ' + t + '">' + UI.icon('history', 18) + '</button>' +
+              '<button class="icon-btn" type="button" data-act="edit" data-id="' + id + '" title="Edit" aria-label="Edit ' + t + '">' + UI.icon('pencil', 18) + '</button>' +
+              '<button class="icon-btn" type="button" data-act="del" data-id="' + id + '" title="Delete" aria-label="Delete ' + t + '">' + UI.icon('trash-2', 18) + '</button>' +
+            '</div></td></tr>';
+        }).join('');
+
+        if (loading) {
+          $('empty').innerHTML = '<div class="skeleton" style="height:56px;margin:12px"></div><div class="skeleton" style="height:56px;margin:12px"></div>';
+        } else if (!list.length) {
+          $('empty').innerHTML = books.length
+            ? UI.state({ icon: 'search-x', title: 'No books found', text: 'Try a different keyword or category.' })
+            : UI.state({
+                icon: 'book-open', title: 'No books yet',
+                text: 'Add your first book, or import many at once from a CSV file.',
+                action: '<button class="btn btn-primary" id="emptyAdd" type="button">Add book</button>'
+              });
+          if ($('emptyAdd')) $('emptyAdd').onclick = function () { openForm(); };
+        } else {
+          $('empty').innerHTML = '';
+        }
+
+        $('info').textContent = list.length
+          ? list.length + (list.length === 1 ? ' book' : ' books') + (moreLoading ? ', still loading more...' : '')
+          : '';
+        $('pageLabel').textContent = 'Page ' + page + ' of ' + pages;
+        $('prev').disabled = page <= 1;
+        $('next').disabled = page >= pages;
+        $('foot').hidden = !list.length;
+      }
+
+      // ----- Add / edit form -----
+      function field(label, name, val, o) {
+        o = o || {};
+        return '<div class="field' + (o.full ? ' full' : '') + '"><label for="f_' + name + '">' + label + '</label>' +
+          '<input class="input" id="f_' + name + '" name="' + name + '" value="' + UI.esc(val) + '"' +
+          (o.type ? ' type="' + o.type + '"' : '') + (o.req ? ' required' : '') + (o.min !== undefined ? ' min="' + o.min + '"' : '') +
+          (o.list ? ' list="' + o.list + '"' : '') + (o.ph ? ' placeholder="' + o.ph + '"' : '') + (o.inputmode ? ' inputmode="' + o.inputmode + '"' : '') + '>' +
+          (o.hint ? '<span class="hint">' + o.hint + '</span>' : '') + '</div>';
+      }
+
+      function formHtml(b) {
+        var out = b ? Number(b.stok_total) - Number(b.stok_tersedia) : 0;
+        b = b || {};
+        return '<div class="form-grid">' +
+          field('Title *', 'judul', b.judul || '', { req: true, full: true }) +
+          field('Author', 'penulis', b.penulis || '') +
+          field('Category', 'kategori', b.kategori || '', { list: 'catList', ph: 'Pick one or type a new one' }) +
+          field('Publisher', 'penerbit', b.penerbit || '') +
+          field('Year', 'tahun', b.tahun || '', { inputmode: 'numeric' }) +
+          field('ISBN', 'isbn', b.isbn || '', { inputmode: 'numeric' }) +
+          field('Number of copies *', 'stok_total', b.stok_total !== undefined ? b.stok_total : 1,
+            { type: 'number', req: true, min: out, hint: out ? 'At least ' + out + ', because that many are on loan or held for reservations.' : '' }) +
+          field('Cover image URL', 'cover_url', b.cover_url || '', { type: 'url', full: true, ph: 'https://... (optional)' }) +
+          '<div class="field full"><label for="f_deskripsi">Description</label>' +
+            '<textarea class="input" id="f_deskripsi" name="deskripsi">' + UI.esc(b.deskripsi || '') + '</textarea></div>' +
+        '</div>';
+      }
+
+      async function openForm(book) {
+        var ok = await Admin.modal({
+          title: book ? 'Edit book' : 'Add book',
+          submit: book ? 'Save changes' : 'Save book',
+          html: formHtml(book),
+          onSubmit: async function (data) {
+            if (book) {
+              data.id = book.id;
+              var upd = await API.post('updateBook', data);
+              books = books.map(function (x) { return x.id === upd.id ? upd : x; });
+            } else {
+              books.push(await API.post('createBook', data));
+            }
+            books.sort(byTitle);
+          }
+        });
+        if (ok) {
+          UI.toast(book ? 'Changes saved' : 'Book added', 'success');
+          renderCategories();
+          render();
+        }
+      }
+
+      async function askDelete(book) {
+        var ok = await Admin.confirm({
+          title: 'Delete this book?', submit: 'Delete book', danger: true,
+          text: '<strong>' + UI.esc(book.judul) + '</strong> will be removed from the catalog. Active reservations for it will be cancelled. This cannot be undone.',
+          action: async function () {
+            await API.post('deleteBook', { id: book.id });
+            books = books.filter(function (x) { return x.id !== book.id; });
+          }
+        });
+        if (ok) { UI.toast('Book deleted', 'success'); renderCategories(); render(); }
+      }
+
+      // ----- CSV import -----
+      var FIELD_ALIASES = {
+        judul: ['title', 'judul'], penulis: ['author', 'penulis'], kategori: ['category', 'kategori'],
+        penerbit: ['publisher', 'penerbit'], tahun: ['year', 'tahun'], isbn: ['isbn'],
+        stok_total: ['copies', 'stock', 'quantity', 'stok_total', 'stok', 'jumlah'],
+        cover_url: ['cover_url', 'cover', 'image'], deskripsi: ['description', 'deskripsi']
+      };
+      var DEFAULT_ORDER = ['judul', 'penulis', 'kategori', 'penerbit', 'tahun', 'isbn', 'stok_total', 'cover_url', 'deskripsi'];
+
+      function booksFromRows(rows) {
+        if (!rows.length) return [];
+        var head = rows[0].map(function (x) { return String(x).trim().toLowerCase(); });
+        var idx = {}, hasHead = false;
+        Object.keys(FIELD_ALIASES).forEach(function (k) {
+          for (var i = 0; i < FIELD_ALIASES[k].length; i++) {
+            var pos = head.indexOf(FIELD_ALIASES[k][i]);
+            if (pos > -1) { idx[k] = pos; if (k === 'judul') hasHead = true; break; }
+          }
+        });
+        if (!hasHead) { idx = {}; DEFAULT_ORDER.forEach(function (k, i) { idx[k] = i; }); }
+        return rows.slice(hasHead ? 1 : 0).map(function (r) {
+          var o = {};
+          DEFAULT_ORDER.forEach(function (k) { o[k] = idx[k] !== undefined && r[idx[k]] !== undefined ? String(r[idx[k]]).trim() : ''; });
+          return o;
+        });
+      }
+
+      async function openImport() {
+        var parsed = [], summary = null;
+        var ok = await Admin.modal({
+          title: 'Import books from CSV', submit: 'Import now',
+          html: '<div class="field"><label for="csvFile">CSV file</label>' +
+              '<input class="input" id="csvFile" type="file" accept=".csv,.txt,text/csv" style="padding-top:9px"></div>' +
+            '<div class="field" style="margin-top:14px"><label for="mode">If a book already exists</label>' +
+              '<select class="input" id="mode" name="mode" style="width:100%">' +
+                '<option value="skip">Skip it (keep the current record)</option>' +
+                '<option value="add">Add the copies from the file to the existing book</option></select>' +
+              '<span class="hint">A book already exists when the ISBN matches, or when the title and author match.</span></div>' +
+            '<p class="hint" style="margin-top:12px">Columns: <b>title, author, category, publisher, year, isbn, copies, cover_url, description</b>. ' +
+            'Only <b>title</b> is required, and copies default to 1. Comma or semicolon separated. ' +
+            '<a class="link" id="tplLink" download="books-template.csv" href="#">Download template</a></p>' +
+            '<div class="preview-note" id="csvInfo" hidden></div>',
+          onOpen: function (dlg) {
+            var tpl = 'title,author,category,publisher,year,isbn,copies,cover_url,description\n' +
+              'Laskar Pelangi,Andrea Hirata,Novel,Bentang Pustaka,2005,9789793062792,3,,Ten children fight for an education\n' +
+              'Atomic Habits,James Clear,Self-development,Gramedia,2019,9786020633176,2,,\n';
+            dlg.querySelector('#tplLink').href = URL.createObjectURL(new Blob(['\uFEFF' + tpl], { type: 'text/csv' }));
+            dlg.querySelector('#csvFile').addEventListener('change', async function () {
+              var info = dlg.querySelector('#csvInfo');
+              parsed = [];
+              if (!this.files[0]) { info.hidden = true; return; }
+              try {
+                parsed = booksFromRows(UI.parseCSV(await this.files[0].text()));
+                info.textContent = parsed.length
+                  ? parsed.length + ' rows ready to import. First row: ' + (parsed[0].judul || '(no title)') + '.'
+                  : 'The file contains no book rows.';
+              } catch (e) { info.textContent = 'The file could not be read.'; }
+              info.hidden = false;
+            });
+          },
+          onSubmit: async function (data) {
+            if (!parsed.length) throw new Error('Choose a CSV file with book rows first.');
+            summary = { added: 0, merged: 0, skipped: 0, failed: 0, errors: [] };
+            for (var i = 0; i < parsed.length; i += 500) {
+              var r = await API.post('importBooks', { rows: parsed.slice(i, i + 500), mode: data.mode });
+              summary.added += r.added; summary.merged += r.merged; summary.skipped += r.skipped; summary.failed += r.failed;
+              summary.errors = summary.errors.concat((r.errors || []).map(function (m) {
+                return m.replace(/^Row (\d+)/, function (_, n) { return 'Row ' + (Number(n) + i); });
+              }));
+            }
+          }
+        });
+        if (!ok) return;
+        await loadAll();
+        UI.toast(summary.added + ' added, ' + summary.merged + ' merged, ' + summary.skipped + ' skipped', 'success');
+        if (summary.failed) {
+          Admin.modal({
+            title: summary.failed + ' rows could not be imported', narrow: true, submit: 'Got it', onSubmit: async function () {},
+            html: '<p>Fix these rows in the CSV file and import again (rows that already worked will be skipped).</p><ul class="err-list">' +
+              summary.errors.map(function (m) { return '<li>' + UI.esc(m) + '</li>'; }).join('') + '</ul>'
+          });
+        }
+      }
+
+      // ----- Events -----
+      $('addBtn').onclick = function () { openForm(); };
+      $('importBtn').onclick = openImport;
+      $('rows').addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-act]');
+        if (!btn) return;
+        var id = btn.getAttribute('data-id');
+        var book = books.filter(function (b) { return b.id === id; })[0];
+        if (!book) return;
+        var act = btn.getAttribute('data-act');
+        if (act === 'hist') Admin.showBookHistory(id);
+        else if (act === 'edit') openForm(book);
+        else askDelete(book);
+      });
+      $('q').addEventListener('input', UI.debounce(function () { q = $('q').value.trim(); page = 1; render(); }, 200));
+      $('kat').addEventListener('change', function () { kat = this.value; page = 1; render(); });
+      $('prev').onclick = function () { page--; render(); };
+      $('next').onclick = function () { page++; render(); };
+
+      // ----- Load all books (100 per request; the table appears after the first page) -----
+      async function loadAll() {
+        loading = true; books = []; render();
+        try {
+          var p = 1, total = Infinity;
+          while (books.length < total) {
+            var d = await API.get('listBooks', { page: p, pageSize: 100 });
+            total = d.total;
+            books = books.concat(d.items);
+            loading = false;
+            moreLoading = books.length < total;
+            renderCategories(); render();
+            if (!d.items.length) break;
+            p++;
+          }
+          moreLoading = false; render();
+        } catch (e) {
+          loading = false; moreLoading = false;
+          $('rows').innerHTML = '';
+          $('foot').hidden = true;
+          $('empty').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The book list could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('retry').onclick = loadAll;
+        }
+      }
+      loadAll();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>My Loans - School Library</title>
+  <meta name="description" content="Check the books you borrowed, your due dates and your reservations.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+</head>
+<body>
+  <header class="site-header" id="site-header"></header>
+
+  <main>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>My loans</h1>
+        <p>Enter your Student ID (NIS) to see the books you borrowed, how many days are left, and your reservations.</p>
+      </div>
+
+      <form class="panel lookup" id="lookupForm">
+        <div class="field">
+          <label for="nis">Student ID (NIS)</label>
+          <div style="display:flex;gap:8px">
+            <input class="input" id="nis" name="nis" inputmode="numeric" autocomplete="off" placeholder="Example: 2024001" required>
+            <button class="btn btn-primary" id="submitBtn" type="submit">Check</button>
+          </div>
+        </div>
+      </form>
+
+      <div id="result" aria-live="polite" style="padding-bottom:56px"></div>
+    </div>
+  </main>
+
+  <footer class="site-footer" id="site-footer"></footer>
+
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/ui.js"></script>
+  <script>
+    (function () {
+      UI.mountChrome('status');
+      var $ = function (id) { return document.getElementById(id); };
+      var NIS_KEY = 'lib_last_nis';
+      var currentNis = '';
+
+      // Prefill with the last used Student ID (a convenience, stored in this browser only)
+      var fromUrl = new URLSearchParams(location.search).get('nis');
+      try { $('nis').value = fromUrl || localStorage.getItem(NIS_KEY) || ''; } catch (e) { $('nis').value = fromUrl || ''; }
+
+      function loanCard(l) {
+        var total = Math.max(UI.diffDays(l.tgl_jatuh_tempo, l.tgl_pinjam), 1);
+        var pct = Math.min(100, Math.max(4, Math.round(((total - l.days_left) / total) * 100)));
+        var cls = l.time_status === 'late' ? 'bad' : (l.time_status === 'soon' || l.time_status === 'due_today') ? 'warn' : '';
+        return '<article class="loan">' +
+          '<div>' + UI.cover(l, 'sm') + '</div>' +
+          '<div class="loan-body"><h3>' + UI.esc(l.judul) + '</h3>' +
+            '<p>Borrowed ' + UI.fmtDate(l.tgl_pinjam) + ', return by ' + UI.fmtDate(l.tgl_jatuh_tempo) + '</p>' +
+            '<div class="progress ' + cls + '" role="img" aria-label="' + pct + ' percent of the loan period used"><i style="width:' + pct + '%"></i></div>' +
+          '</div>' +
+          '<div class="loan-side">' + UI.loanBadge(l) +
+            (l.fine > 0 ? '<span class="denda">Fine ' + UI.rupiah(l.fine) + '</span>' : '') + '</div>' +
+        '</article>';
+      }
+
+      function resCard(r) {
+        var line = r.status === 'Ready'
+          ? 'A copy is held for you. Collect it at the library by ' + UI.fmtDate(r.tgl_kedaluwarsa) + '.'
+          : 'You are number ' + r.position + ' in the queue. We will hold a copy for you when it is returned.';
+        return '<article class="loan">' +
+          '<div>' + UI.cover(r, 'sm') + '</div>' +
+          '<div class="loan-body"><h3>' + UI.esc(r.judul) + '</h3><p>' + line + '</p></div>' +
+          '<div class="loan-side">' + UI.resBadge(r) +
+            '<button class="btn-text" type="button" data-cancel="' + UI.esc(r.id) + '">Cancel reservation</button></div>' +
+        '</article>';
+      }
+
+      function render(d) {
+        var late = d.loans.filter(function (l) { return l.time_status === 'late'; }).length;
+        var ready = d.reservations.filter(function (r) { return r.status === 'Ready'; }).length;
+        var initial = (d.nama || '?').trim().charAt(0).toUpperCase();
+        var detail = [d.kelas ? 'Class ' + d.kelas : '', d.jenjang].filter(Boolean).join(', ');
+        var html = '<div class="who"><div class="avatar">' + UI.esc(initial) + '</div>' +
+          '<div><h2>' + UI.esc(d.nama) + '</h2><p>' + UI.esc(detail) + '</p></div></div>';
+
+        if (d.archived) {
+          html += '<div class="notice bad">' + UI.icon('info', 22) + '<span>This student account is archived. Ask the librarian if you need access.</span></div>';
+        }
+        if (ready) {
+          html += '<div class="notice ok">' + UI.icon('bookmark-check', 22) + '<span>' + ready +
+            (ready === 1 ? ' reserved book is' : ' reserved books are') + ' ready for pickup.</span></div>';
+        }
+
+        if (!d.loans.length) {
+          html += UI.state({
+            icon: 'book-open', title: 'No books borrowed',
+            text: 'You are not borrowing any books right now. Find your next read in the catalog.',
+            action: '<a class="btn btn-soft" href="index.html">Browse the catalog</a>'
+          }).replace('state span-all', 'state panel');
+        } else {
+          html += late
+            ? '<div class="notice bad">' + UI.icon('triangle-alert', 22) + '<span>' + late + (late === 1 ? ' book is' : ' books are') + ' overdue. Please return ' + (late === 1 ? 'it' : 'them') + ' to the library as soon as possible.</span></div>'
+            : '<div class="notice ok">' + UI.icon('circle-check', 22) + '<span>All your loans are within the due date.</span></div>';
+          html += '<div class="loans">' + d.loans.map(loanCard).join('') + '</div>';
+        }
+
+        if (d.reservations.length) {
+          html += '<h2 class="block-title">My reservations</h2><div class="loans">' + d.reservations.map(resCard).join('') + '</div>';
+        }
+        $('result').innerHTML = html;
+      }
+
+      async function check(nis, quiet) {
+        var btn = $('submitBtn');
+        btn.disabled = true; btn.textContent = 'Checking...';
+        if (!quiet) $('result').innerHTML = '<div class="loans"><div class="skeleton" style="height:84px"></div><div class="skeleton" style="height:84px"></div></div>';
+        try {
+          var d = await API.get('memberStatus', { nis: nis });
+          currentNis = nis;
+          try { localStorage.setItem(NIS_KEY, nis); } catch (e) { /* ignore */ }
+          render(d);
+        } catch (e) {
+          $('result').innerHTML = UI.state({
+            icon: 'user-x', title: 'We could not show this data', text: e.message
+          }).replace('state span-all', 'state panel');
+        } finally {
+          btn.disabled = false; btn.textContent = 'Check';
+        }
+      }
+
+      $('result').addEventListener('click', async function (ev) {
+        var btn = ev.target.closest('[data-cancel]');
+        if (!btn) return;
+        if (!window.confirm('Cancel this reservation?')) return;
+        btn.disabled = true;
+        try {
+          await API.post('cancelReservation', { id: btn.getAttribute('data-cancel'), nis: currentNis }, { auth: false });
+          UI.toast('Reservation cancelled', 'success');
+          check(currentNis, true);
+        } catch (e) {
+          UI.toast(e.message, 'error');
+          btn.disabled = false;
+        }
+      });
+
+      $('lookupForm').addEventListener('submit', function (ev) {
+        ev.preventDefault();
+        var nis = $('nis').value.trim();
+        if (nis) check(nis);
+      });
+      if (fromUrl) check(fromUrl.trim());
+    })();
+  </script>
+</body>
+</html>
