@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reservations - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="../assets/js/theme.js"></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="admin-toolbar">
+          <div class="seg" id="seg" role="group" aria-label="Reservation filter">
+            <button type="button" data-f="ready" aria-pressed="true">Ready for pickup</button>
+            <button type="button" data-f="waiting" aria-pressed="false">Waiting in queue</button>
+            <button type="button" data-f="history" aria-pressed="false">History</button>
+          </div>
+          <div class="input-icon grow">
+            <iconify-icon icon="lucide:search" width="18" height="18" aria-hidden="true"></iconify-icon>
+            <input class="input" id="q" type="search" placeholder="Search by name, ID number or title" aria-label="Search reservations">
+          </div>
+        </div>
+
+        <div class="table-card">
+          <div class="table-scroll">
+            <table class="tbl" style="min-width:760px">
+              <thead id="thead"></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div id="empty"></div>
+          <div class="table-foot" id="foot"><span id="info"></span></div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('reservations', 'Reservations');
+
+      var $ = function (id) { return document.getElementById(id); };
+      var filter = 'ready', list = [], q = '', loading = true, reqId = 0;
+
+      function visible() {
+        var s = q.toLowerCase();
+        return list.filter(function (r) {
+          return !s || [r.nama, r.nis, r.kelas, r.judul].join(' ').toLowerCase().indexOf(s) > -1;
+        });
+      }
+
+      function head() {
+        var cols = {
+          ready: ['Member', 'Book', 'Reserved', 'Pick up by', 'Actions'],
+          waiting: ['Member', 'Book', 'Reserved', 'Queue', 'Actions'],
+          history: ['Member', 'Book', 'Reserved', 'Closed', 'Result']
+        }[filter];
+        $('thead').innerHTML = '<tr>' + cols.map(function (c, i) {
+          return '<th' + (i === 4 ? ' class="num"' : '') + '>' + c + '</th>';
+        }).join('') + '</tr>';
+      }
+
+      function pickupCell(r) {
+        var d = r.days_to_pickup;
+        var note = d === null ? '' : (d < 0 ? 'expired' : d === 0 ? 'last day today' : d + (d === 1 ? ' day left' : ' days left'));
+        return '<div class="stack-sm"><span class="nowrap">' + UI.fmtDate(r.tgl_kedaluwarsa) + '</span><small>' + note + '</small></div>';
+      }
+
+      function actions(r) {
+        var id = UI.esc(r.id);
+        var cancel = '<button class="btn btn-outline btn-sm" type="button" data-act="cancel" data-id="' + id + '">Cancel</button>';
+        if (r.status === 'Ready') {
+          return '<div class="actions"><button class="btn btn-soft btn-sm" type="button" data-act="lend" data-id="' + id + '">Lend now</button>' + cancel + '</div>';
+        }
+        return '<div class="actions">' + cancel + '</div>';
+      }
+
+      function render() {
+        head();
+        var rows = visible();
+        $('rows').innerHTML = rows.map(function (r) {
+          var last = filter === 'ready' ? pickupCell(r)
+            : filter === 'waiting' ? UI.resBadge(r)
+            : '<span class="nowrap">' + UI.fmtDate(r.tgl_selesai) + '</span>';
+          var end = filter === 'history' ? '<div class="actions">' + UI.resBadge(r) + '</div>' : actions(r);
+          return '<tr><td><div class="cell-person"><b>' + UI.esc(r.nama) + '</b><small>' + UI.esc([r.nis, r.kelas].filter(Boolean).join(', ')) + '</small></div></td>' +
+            '<td><b style="font-weight:600">' + UI.esc(r.judul) + '</b></td>' +
+            '<td class="nowrap">' + UI.fmtDate(r.tgl_dibuat) + '</td><td>' + last + '</td><td>' + end + '</td></tr>';
+        }).join('');
+
+        if (loading) {
+          $('empty').innerHTML = '<div class="skeleton" style="height:56px;margin:12px"></div><div class="skeleton" style="height:56px;margin:12px"></div>';
+        } else if (!rows.length) {
+          var m = {
+            ready: ['bookmark-check', 'No reservations are waiting for pickup', 'When a reserved book is returned, the student appears here.'],
+            waiting: ['bookmark', 'Nobody is waiting in a queue', 'Students can reserve a book from its page when every copy is on loan.'],
+            history: ['history', 'No reservation history yet', 'Picked up, cancelled and expired reservations are listed here.']
+          }[filter];
+          $('empty').innerHTML = list.length ? UI.state({ icon: 'search-x', title: 'Nothing found', text: 'Try a different keyword.' })
+            : UI.state({ icon: m[0], title: m[1], text: m[2] });
+        } else {
+          $('empty').innerHTML = '';
+        }
+        $('info').textContent = rows.length ? rows.length + (rows.length === 1 ? ' reservation' : ' reservations') : '';
+        $('foot').hidden = !rows.length;
+      }
+
+      async function load() {
+        var id = ++reqId;
+        loading = true; list = []; render();
+        try {
+          var data = await API.post('listReservations', { filter: filter });
+          if (id !== reqId) return;
+          list = data; loading = false; render();
+        } catch (e) {
+          if (id !== reqId) return;
+          loading = false;
+          $('rows').innerHTML = ''; $('foot').hidden = true;
+          $('empty').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The reservations could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('retry').onclick = load;
+        }
+      }
+
+      async function lend(r) {
+        var res = null;
+        var ok = await Admin.confirm({
+          title: 'Lend the reserved book?', submit: 'Lend now',
+          text: 'Lend <strong>' + UI.esc(r.judul) + '</strong> to <strong>' + UI.esc(r.nama) + '</strong>? The held copy becomes a normal loan.',
+          action: async function () { res = await API.post('createLoan', { id_buku: r.id_buku, id_anggota: r.id_anggota }); }
+        });
+        if (ok) { UI.toast('Loan recorded, due ' + UI.fmtDate(res.tgl_jatuh_tempo), 'success'); load(); }
+      }
+
+      async function cancel(r) {
+        var ok = await Admin.confirm({
+          title: 'Cancel this reservation?', submit: 'Cancel reservation', danger: true,
+          text: 'The reservation of <strong>' + UI.esc(r.judul) + '</strong> by <strong>' + UI.esc(r.nama) + '</strong> will be cancelled.' +
+            (r.status === 'Ready' ? ' The held copy goes to the next student in the queue, or back to the shelf.' : ''),
+          action: function () { return API.post('adminCancelReservation', { id: r.id }); }
+        });
+        if (ok) { UI.toast('Reservation cancelled', 'success'); load(); }
+      }
+
+      $('seg').addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-f]');
+        if (!b || b.getAttribute('data-f') === filter) return;
+        filter = b.getAttribute('data-f');
+        Array.prototype.forEach.call($('seg').querySelectorAll('button'), function (x) {
+          x.setAttribute('aria-pressed', String(x.getAttribute('data-f') === filter));
+        });
+        load();
+      });
+      $('q').addEventListener('input', UI.debounce(function () { q = $('q').value.trim(); render(); }, 200));
+      $('rows').addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-act]');
+        if (!btn) return;
+        var r = list.filter(function (x) { return x.id === btn.getAttribute('data-id'); })[0];
+        if (!r) return;
+        if (btn.getAttribute('data-act') === 'lend') lend(r); else cancel(r);
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Year-end Promotion - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="../assets/js/theme.js"></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="notice ok promo-note" style="font-weight:500">
+          <iconify-icon icon="lucide:info" width="22" height="22" aria-hidden="true"></iconify-icon>
+          <span>Run this once at the end of the school year. Each class below gets a suggested action: move up to the next class, or graduate.
+            The suggestions assume grades 7 to 9 are JHS and grades 10 to 12 are SHS, so please review every row before applying.
+            Graduated students go to the archive (their history is kept), and students who still have borrowed books are not archived. Teachers are never moved or archived by this tool.</span>
+        </div>
+
+        <div class="admin-toolbar">
+          <div class="field" style="grid-auto-flow:column;align-items:center;gap:10px">
+            <label for="year">Graduation year</label>
+            <input class="input" id="year" type="number" min="2000" max="2100" style="width:120px">
+          </div>
+          <span class="hint" id="summary"></span>
+        </div>
+
+        <div class="table-card">
+          <div class="table-scroll">
+            <table class="tbl" style="min-width:760px">
+              <thead><tr><th>Current class</th><th>Students</th><th>Action</th><th>New class</th><th>New level</th></tr></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div id="empty"></div>
+        </div>
+
+        <div class="form-actions" id="actions" hidden>
+          <button class="btn btn-primary" id="applyBtn" type="button">Review and apply</button>
+        </div>
+        <div id="result"></div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('promotion', 'Year-end Promotion');
+      var $ = function (id) { return document.getElementById(id); };
+
+      var ROMAN = { I: 1, II: 2, III: 3, IV: 4, V: 5, VI: 6, VII: 7, VIII: 8, IX: 9, X: 10, XI: 11, XII: 12 };
+      var TO_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+      var groups = [];
+
+      // "X-A" -> {num: 10, roman: true, rest: "-A"}; "9B" -> {num: 9, roman: false, rest: "B"}
+      function parseClass(c) {
+        var m = /^\s*(\d{1,2}|[IVXivx]+)(.*)$/.exec(c);
+        if (!m) return null;
+        var isNum = /^\d+$/.test(m[1]);
+        var num = isNum ? parseInt(m[1], 10) : ROMAN[m[1].toUpperCase()];
+        return num ? { num: num, roman: !isNum, rest: m[2] } : null;
+      }
+      function fmtClass(p, n) { return (p.roman ? TO_ROMAN[n] : String(n)) + p.rest; }
+
+      function suggest(cls) {
+        var p = parseClass(cls);
+        if (!p) return { action: 'keep', to: '', level: '' };
+        if (p.num >= 12) return { action: 'graduate', to: '', level: '' };
+        var n = p.num + 1;
+        return { action: 'move', to: fmtClass(p, n), level: n >= 10 ? 'SHS' : (n >= 7 ? 'JHS' : '') };
+      }
+
+      function natural(a, b) { return a.cls.localeCompare(b.cls, undefined, { numeric: true }); }
+      function rank(g) { var p = parseClass(g.cls); return p ? p.num : 99; }
+
+      function buildGroups(members) {
+        var map = {};
+        members.forEach(function (m) {
+          var c = String(m.kelas || '').trim();
+          if (!c) return;
+          if (!map[c]) map[c] = { cls: c, count: 0, levels: {} };
+          map[c].count++;
+          if (m.jenjang) map[c].levels[m.jenjang] = (map[c].levels[m.jenjang] || 0) + 1;
+        });
+        // highest grades first, so the order reads like the actual flow
+        return Object.keys(map).map(function (k) { return map[k]; }).sort(function (a, b) { return rank(b) - rank(a) || natural(a, b); });
+      }
+
+      function render() {
+        $('rows').innerHTML = groups.map(function (g, i) {
+          var s = suggest(g.cls);
+          var lvl = Object.keys(g.levels).sort(function (a, b) { return g.levels[b] - g.levels[a]; })[0] || '';
+          var opt = function (v, label) { return '<option value="' + v + '"' + (s.action === v ? ' selected' : '') + '>' + label + '</option>'; };
+          var lv = function (v, label) { return '<option value="' + v + '"' + (s.level === v ? ' selected' : '') + '>' + label + '</option>'; };
+          return '<tr data-i="' + i + '"><td><b>' + UI.esc(g.cls) + '</b> ' + (lvl ? '<span class="badge muted">' + lvl + '</span>' : '') + '</td>' +
+            '<td>' + g.count + '</td>' +
+            '<td><select class="input" data-f="action" aria-label="Action for ' + UI.esc(g.cls) + '">' +
+              opt('move', 'Move to a new class') + opt('graduate', 'Graduate (archive)') + opt('keep', 'Keep as is') + '</select></td>' +
+            '<td><input class="input" data-f="to" value="' + UI.esc(s.to) + '" aria-label="New class for ' + UI.esc(g.cls) + '"' + (s.action === 'move' ? '' : ' disabled') + '></td>' +
+            '<td><select class="input" data-f="level" aria-label="New level for ' + UI.esc(g.cls) + '"' + (s.action === 'move' ? '' : ' disabled') + '>' +
+              lv('', 'Keep level') + lv('JHS', 'JHS') + lv('SHS', 'SHS') + '</select></td></tr>';
+        }).join('');
+        $('actions').hidden = !groups.length;
+        updateSummary();
+      }
+
+      function readPlan() {
+        var moves = [], graduate = [], counts = { move: 0, graduate: 0, keep: 0 }, problem = '';
+        Array.prototype.forEach.call($('rows').querySelectorAll('tr'), function (tr) {
+          var g = groups[Number(tr.getAttribute('data-i'))];
+          var action = tr.querySelector('[data-f=action]').value;
+          var to = tr.querySelector('[data-f=to]').value.trim();
+          var level = tr.querySelector('[data-f=level]').value;
+          counts[action] += g.count;
+          if (action === 'graduate') graduate.push(g.cls);
+          else if (action === 'move') {
+            if (!to) problem = 'Enter a new class for ' + g.cls + ', or choose another action.';
+            else moves.push({ from: g.cls, to: to, jenjang: level });
+          }
+        });
+        return { moves: moves, graduate: graduate, counts: counts, problem: problem };
+      }
+
+      function updateSummary() {
+        var p = readPlan();
+        $('summary').textContent = p.counts.move + ' students move up, ' + p.counts.graduate + ' graduate, ' + p.counts.keep + ' stay as they are.';
+      }
+
+      $('rows').addEventListener('change', function (ev) {
+        var tr = ev.target.closest('tr');
+        if (!tr) return;
+        if (ev.target.getAttribute('data-f') === 'action') {
+          var move = ev.target.value === 'move';
+          tr.querySelector('[data-f=to]').disabled = !move;
+          tr.querySelector('[data-f=level]').disabled = !move;
+        }
+        updateSummary();
+      });
+      $('rows').addEventListener('input', updateSummary);
+
+      $('applyBtn').addEventListener('click', async function () {
+        var year = parseInt($('year').value, 10);
+        if (!year || year < 2000 || year > 2100) { UI.toast('Enter a valid graduation year', 'error'); return; }
+        var plan = readPlan();
+        if (plan.problem) { UI.toast(plan.problem, 'error'); return; }
+        if (!plan.moves.length && !plan.graduate.length) { UI.toast('Nothing to apply. Every class is set to "Keep as is".', 'error'); return; }
+
+        var result = null;
+        var ok = await Admin.confirm({
+          title: 'Apply year-end promotion?', submit: 'Apply promotion',
+          text: '<strong>' + plan.counts.move + '</strong> students will move to their new class, <strong>' + plan.counts.graduate +
+            '</strong> will graduate in <strong>' + year + '</strong> and be archived, and <strong>' + plan.counts.keep + '</strong> stay as they are.' +
+            '<br><br>Class changes are not undone automatically (archived students can be restored one by one). ' +
+            'Make a copy of the spreadsheet first if you want a backup.',
+          action: async function () {
+            result = await API.post('applyPromotion', { moves: plan.moves, graduate: plan.graduate, year: year });
+          }
+        });
+        if (!ok) return;
+        var html = '<div class="notice ok" style="margin-top:16px">' + UI.icon('circle-check', 22) + '<span>Done. ' + result.promoted +
+          ' students moved up and ' + result.graduated + ' graduated.</span></div>';
+        if (result.skipped) {
+          html += '<div class="panel" style="margin-top:12px"><h2 class="section-title">' + result.skipped + ' students were not archived</h2>' +
+            '<p class="sub">They still have borrowed books. Record the returns, then run the promotion again for their class.</p>' +
+            result.skipped_list.map(function (s) {
+              return '<div class="row"><div class="grow"><b>' + UI.esc(s.nama) + '</b><small>' + UI.esc(s.nis) + ', ' + UI.esc(s.kelas) + '</small></div><span class="badge warn">' + UI.esc(s.reason) + '</span></div>';
+            }).join('') + '</div>';
+        }
+        $('result').innerHTML = html;
+        load();
+      });
+
+      async function load() {
+        $('rows').innerHTML = '';
+        $('empty').innerHTML = '<div class="skeleton" style="height:56px;margin:12px"></div><div class="skeleton" style="height:56px;margin:12px"></div>';
+        try {
+          var members = await API.post('listMembers', { status: 'active', type: 'student' });
+          groups = buildGroups(members);
+          $('empty').innerHTML = groups.length ? '' : UI.state({
+            icon: 'users', title: 'No classes to promote',
+            text: 'Add students with a class first, then come back here at the end of the school year.',
+            action: '<a class="btn btn-soft" href="members.html">Go to students</a>'
+          });
+          render();
+        } catch (e) {
+          $('empty').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The classes could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('retry').onclick = load;
+        }
+      }
+
+      $('year').value = new Date().getFullYear();
+      load();
+    })();
+  </script>
+</body>
+</html>

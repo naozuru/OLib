@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reports - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="../assets/js/theme.js"></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="admin-toolbar">
+          <div class="seg" id="seg" role="group" aria-label="Period">
+            <button type="button" data-p="30d" aria-pressed="true">Last 30 days</button>
+            <button type="button" data-p="month" aria-pressed="false">This month</button>
+            <button type="button" data-p="3m" aria-pressed="false">Last 3 months</button>
+            <button type="button" data-p="year" aria-pressed="false">This year</button>
+            <button type="button" data-p="custom" aria-pressed="false">Custom</button>
+          </div>
+          <div class="date-range" id="custom" hidden>
+            <input class="input" id="from" type="date" aria-label="From date">
+            <span class="hint">to</span>
+            <input class="input" id="to" type="date" aria-label="To date">
+            <button class="btn btn-soft btn-sm" id="applyRange" type="button">Apply</button>
+          </div>
+          <span class="grow"></span>
+          <button class="btn btn-outline" id="csvBtn" type="button">
+            <iconify-icon icon="lucide:download" width="18" height="18" aria-hidden="true"></iconify-icon>Export loans (CSV)
+          </button>
+          <button class="btn btn-outline" id="printBtn" type="button">
+            <iconify-icon icon="lucide:printer" width="18" height="18" aria-hidden="true"></iconify-icon>Print / Save as PDF
+          </button>
+        </div>
+
+        <p class="report-title" id="title"></p>
+        <section class="stats" id="stats" aria-label="Summary"></section>
+        <div id="body"></div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('reports', 'Reports and Statistics');
+
+      var $ = function (id) { return document.getElementById(id); };
+      var preset = '30d', range = null, reqId = 0;
+
+      function ymd(d) {
+        var m = d.getMonth() + 1, day = d.getDate();
+        return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (day < 10 ? '0' : '') + day;
+      }
+
+      function computeRange(p) {
+        var now = new Date();
+        var today = ymd(now);
+        if (p === '30d') { var d = new Date(now); d.setDate(d.getDate() - 29); return { from: ymd(d), to: today }; }
+        if (p === 'month') return { from: ymd(new Date(now.getFullYear(), now.getMonth(), 1)), to: today };
+        if (p === '3m') return { from: ymd(new Date(now.getFullYear(), now.getMonth() - 2, 1)), to: today };
+        if (p === 'year') return { from: ymd(new Date(now.getFullYear(), 0, 1)), to: today };
+        return { from: $('from').value, to: $('to').value };
+      }
+
+      function stat(ic, value, label) {
+        return '<div class="stat"><span class="stat-ic">' + UI.icon(ic, 24) + '</span><div><b>' + value + '</b><span>' + label + '</span></div></div>';
+      }
+
+      function hbars(items, labelFn, subFn) {
+        if (!items.length) return '<p class="empty-note">No data for this period.</p>';
+        var max = Math.max.apply(null, items.map(function (i) { return i.count; })) || 1;
+        return items.map(function (i) {
+          var sub = subFn ? subFn(i) : '';
+          return '<div class="hbar"><div class="hbar-top"><span>' + UI.esc(labelFn(i)) + (sub ? ' <small>' + UI.esc(sub) + '</small>' : '') +
+            '</span><span>' + i.count + '</span></div><div class="hbar-track"><i style="width:' + Math.max(3, Math.round(i.count / max * 100)) + '%"></i></div></div>';
+        }).join('');
+      }
+
+      function monthBars(monthly) {
+        var max = Math.max.apply(null, monthly.map(function (m) { return m.loans; })) || 1;
+        return '<div class="bars" role="img" aria-label="Loans per month">' + monthly.map(function (m) {
+          return '<div class="bar-col"><b>' + (m.loans || '') + '</b><i style="height:' + Math.round(m.loans / max * 100) + '%"></i><span>' + UI.fmtMonth(m.month) + '</span></div>';
+        }).join('') + '</div>';
+      }
+
+      function panel(title, inner, full) {
+        return '<section class="panel"' + (full ? ' style="grid-column:1/-1"' : '') + '><h2 class="chart-title">' + title + '</h2>' + inner + '</section>';
+      }
+
+      function render(d) {
+        var s = d.summary, c = d.collection;
+        $('title').textContent = UI.fmtDate(d.from) + ' to ' + UI.fmtDate(d.to) + '. ' + CONFIG.SCHOOL_NAME + ' ' + CONFIG.LIB_NAME + '.';
+        $('stats').innerHTML =
+          stat('arrow-left-right', s.loans, 'Loans in this period') +
+          stat('undo-2', s.returns, 'Books returned') +
+          stat('circle-check', s.on_time_rate === null ? '-' : s.on_time_rate + '%', 'Returned on time') +
+          stat('hourglass', s.avg_days_kept === null ? '-' : s.avg_days_kept + ' d', 'Average days kept') +
+          stat('users', s.active_borrowers, 'Members who borrowed') +
+          stat('book-open', s.titles_loaned, 'Different titles borrowed') +
+          stat('book-x', s.idle_titles, 'Titles never borrowed') +
+          stat('triangle-alert', s.overdue_now, 'Overdue right now') +
+          stat('bookmark', s.reservations_created, 'Reservations made') +
+          stat('bookmark-check', s.reservations_fulfilled, 'Reservations picked up');
+
+        $('body').innerHTML = '<div class="report-grid">' +
+          panel('Loans per month (last 12 months)', monthBars(d.monthly), true) +
+          panel('Most borrowed books', hbars(d.top_books, function (i) { return i.judul; }, function (i) { return i.penulis; })) +
+          panel('Most active readers', hbars(d.top_readers, function (i) { return i.nama; }, function (i) { return i.kelas; })) +
+          panel('Loans by category', hbars(d.by_category, function (i) { return i.name; })) +
+          panel('Loans by class (students)', hbars(d.by_class, function (i) { return i.name; })) +
+          panel('Loans by level (students)', hbars(d.by_level, function (i) { return i.name; })) +
+          panel('Loans by borrower type', hbars(d.by_type, function (i) { return i.name; })) +
+          panel('Collection today', '<div class="mini-stats">' +
+            '<div class="mini"><b>' + c.titles + '</b><span>Book titles</span></div>' +
+            '<div class="mini"><b>' + c.copies + '</b><span>Copies</span></div>' +
+            '<div class="mini"><b>' + c.students_active + '</b><span>Active students</span></div>' +
+            '<div class="mini"><b>' + c.teachers_active + '</b><span>Active teachers</span></div>' +
+            '<div class="mini"><b>' + c.students_graduated + '</b><span>Graduated (archive)</span></div></div>') +
+          '</div>';
+      }
+
+      async function load() {
+        var id = ++reqId;
+        $('stats').innerHTML = new Array(11).join('<div class="skeleton" style="height:84px;border-radius:14px"></div>');
+        $('body').innerHTML = '<div class="skeleton" style="height:240px;margin-top:16px;border-radius:14px"></div>';
+        try {
+          var d = await API.post('reports', range);
+          if (id !== reqId) return;
+          render(d);
+        } catch (e) {
+          if (id !== reqId) return;
+          $('stats').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The report could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('body').innerHTML = '';
+          $('retry').onclick = load;
+        }
+      }
+
+      function setPreset(p) {
+        preset = p;
+        Array.prototype.forEach.call($('seg').querySelectorAll('button'), function (b) {
+          b.setAttribute('aria-pressed', String(b.getAttribute('data-p') === p));
+        });
+        $('custom').hidden = p !== 'custom';
+        if (p === 'custom') {
+          if (!$('from').value) { var r = computeRange('30d'); $('from').value = r.from; $('to').value = r.to; }
+          return;
+        }
+        range = computeRange(p);
+        load();
+      }
+
+      $('seg').addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-p]');
+        if (b) setPreset(b.getAttribute('data-p'));
+      });
+      $('applyRange').onclick = function () {
+        if (!$('from').value || !$('to').value) { UI.toast('Choose both dates', 'error'); return; }
+        range = computeRange('custom');
+        load();
+      };
+      $('printBtn').onclick = function () { window.print(); };
+
+      $('csvBtn').onclick = async function () {
+        var btn = this, label = btn.innerHTML;
+        btn.disabled = true;
+        try {
+          var all = await API.post('listLoans', { filter: 'all' });
+          var rows = all.filter(function (l) { return l.tgl_pinjam >= range.from && l.tgl_pinjam <= range.to; });
+          if (!rows.length) { UI.toast('There are no loans in this period', 'error'); return; }
+          var table = [['ID number', 'Borrower', 'Type', 'Class / subject', 'Book', 'Author', 'Borrowed', 'Due', 'Returned', 'Status', 'Days late', 'Fine (Rp)']];
+          rows.forEach(function (l) {
+            table.push([l.nis, l.nama, l.member_type, l.kelas, l.judul, l.penulis, l.tgl_pinjam, l.tgl_jatuh_tempo, l.tgl_kembali, l.status, l.days_late, l.fine]);
+          });
+          UI.downloadCSV('loans_' + range.from + '_to_' + range.to + '.csv', table);
+          UI.toast(rows.length + ' loans exported', 'success');
+        } catch (e) { UI.toast(e.message, 'error'); }
+        finally { btn.disabled = false; btn.innerHTML = label; }
+      };
+
+      setPreset('30d');
+    })();
+  </script>
+</body>
+</html>

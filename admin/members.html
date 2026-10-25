@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Members - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="../assets/js/theme.js"></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="admin-toolbar">
+          <div class="seg" id="seg" role="group" aria-label="Member list">
+            <button type="button" data-s="active" aria-pressed="true">Active</button>
+            <button type="button" data-s="graduated" aria-pressed="false">Archive</button>
+          </div>
+          <div class="input-icon grow">
+            <iconify-icon icon="lucide:search" width="18" height="18" aria-hidden="true"></iconify-icon>
+            <input class="input" id="q" type="search" placeholder="Search by name, ID number or class / subject" aria-label="Search members">
+          </div>
+          <select class="input" id="typ" aria-label="Type filter">
+            <option value="">Students and teachers</option><option value="student">Students only</option><option value="teacher">Teachers only</option>
+          </select>
+          <select class="input" id="jen" aria-label="Level filter">
+            <option value="">All levels</option><option value="JHS">JHS</option><option value="SHS">SHS</option>
+          </select>
+          <button class="btn btn-outline" id="importBtn" type="button">
+            <iconify-icon icon="lucide:upload" width="18" height="18" aria-hidden="true"></iconify-icon>Import CSV
+          </button>
+          <button class="btn btn-primary" id="addBtn" type="button">Add member</button>
+        </div>
+
+        <div class="table-card">
+          <div class="table-scroll">
+            <table class="tbl">
+              <thead id="thead"></thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <div id="empty"></div>
+          <div class="table-foot" id="foot">
+            <span id="info"></span>
+            <div class="pager">
+              <button class="icon-btn" id="prev" type="button" aria-label="Previous page"><iconify-icon icon="lucide:chevron-left" width="18" height="18" aria-hidden="true"></iconify-icon></button>
+              <span id="pageLabel"></span>
+              <button class="icon-btn" id="next" type="button" aria-label="Next page"><iconify-icon icon="lucide:chevron-right" width="18" height="18" aria-hidden="true"></iconify-icon></button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('members', 'Manage Members');
+
+      var $ = function (id) { return document.getElementById(id); };
+      var PER = 25;
+      var tab = 'active';
+      var members = [], page = 1, q = '', jen = '', typ = '', loading = true, reqId = 0;
+
+      function byName(a, b) { return String(a.nama).localeCompare(String(b.nama)); }
+
+      function filtered() {
+        var s = q.toLowerCase();
+        return members.filter(function (m) {
+          if (jen && m.jenjang !== jen) return false;
+          if (typ && (m.type === 'Teacher') !== (typ === 'teacher')) return false;
+          if (!s) return true;
+          return [m.nama, m.nis, m.kelas].join(' ').toLowerCase().indexOf(s) > -1;
+        });
+      }
+
+      function renderHead() {
+        $('thead').innerHTML = tab === 'active'
+          ? '<tr><th>Name</th><th>ID number</th><th>Class / subject</th><th>Level</th><th>Borrowed</th><th class="num">Actions</th></tr>'
+          : '<tr><th>Name</th><th>ID number</th><th>Last class / subject</th><th>Level</th><th>Year archived</th><th class="num">Actions</th></tr>';
+      }
+
+      function actionButtons(m) {
+        var id = UI.esc(m.id), n = UI.esc(m.nama);
+        var b = function (act, ic, label) {
+          return '<button class="icon-btn" type="button" data-act="' + act + '" data-id="' + id + '" title="' + label + '" aria-label="' + label + ' ' + n + '">' + UI.icon(ic, 18) + '</button>';
+        };
+        return tab === 'active'
+          ? b('hist', 'history', 'History of') + b('edit', 'pencil', 'Edit') + b('archive', 'archive', 'Archive') + b('del', 'trash-2', 'Delete')
+          : b('hist', 'history', 'History of') + b('restore', 'rotate-ccw', 'Restore') + b('del', 'trash-2', 'Delete');
+      }
+
+      function render() {
+        renderHead();
+        var list = filtered();
+        var pages = Math.max(1, Math.ceil(list.length / PER));
+        if (page > pages) page = pages;
+        var slice = list.slice((page - 1) * PER, page * PER);
+
+        $('rows').innerHTML = slice.map(function (m) {
+          var last = tab === 'active'
+            ? (Number(m.pinjaman_aktif) ? '<span class="badge">' + m.pinjaman_aktif + (m.pinjaman_aktif === 1 ? ' book' : ' books') + '</span>' : '-')
+            : (m.lulus_tahun ? UI.esc(m.lulus_tahun) : '-');
+          return '<tr><td><div class="cell-person"><b>' + UI.esc(m.nama) + '</b>' + (m.type === 'Teacher' ? '<small>Teacher</small>' : '') + '</div></td>' +
+            '<td>' + UI.esc(m.nis) + '</td>' +
+            '<td>' + (m.kelas ? UI.esc(m.kelas) : '-') + '</td>' +
+            '<td>' + (m.jenjang ? '<span class="badge muted">' + UI.esc(m.jenjang) + '</span>' : '-') + '</td>' +
+            '<td>' + last + '</td>' +
+            '<td><div class="actions">' + actionButtons(m) + '</div></td></tr>';
+        }).join('');
+
+        if (loading) {
+          $('empty').innerHTML = '<div class="skeleton" style="height:56px;margin:12px"></div><div class="skeleton" style="height:56px;margin:12px"></div>';
+        } else if (!list.length) {
+          if (members.length) {
+            $('empty').innerHTML = UI.state({ icon: 'search-x', title: 'No members found', text: 'Try a different keyword, type or level.' });
+          } else if (tab === 'active') {
+            $('empty').innerHTML = UI.state({
+              icon: 'users', title: 'No members yet',
+              text: 'Add students and teachers one by one, or import them all at once from a CSV file.',
+              action: '<button class="btn btn-primary" id="emptyImport" type="button">Import from CSV</button>'
+            });
+            $('emptyImport').onclick = openImport;
+          } else {
+            $('empty').innerHTML = UI.state({
+              icon: 'graduation-cap', title: 'The archive is empty',
+              text: 'Graduated students and archived members appear here after the year-end promotion or when you archive someone.'
+            });
+          }
+        } else {
+          $('empty').innerHTML = '';
+        }
+        $('info').textContent = list.length ? list.length + (list.length === 1 ? ' member' : ' members') : '';
+        $('pageLabel').textContent = 'Page ' + page + ' of ' + pages;
+        $('prev').disabled = page <= 1;
+        $('next').disabled = page >= pages;
+        $('foot').hidden = !list.length;
+      }
+
+      // ----- Add / edit form -----
+      function formHtml(m) {
+        m = m || {};
+        var teacher = m.type === 'Teacher';
+        var opt = function (v) { return '<option value="' + v + '"' + (m.jenjang === v ? ' selected' : '') + '>' + v + '</option>'; };
+        return '<div class="form-grid">' +
+          '<div class="field full"><label for="m_tipe">Type</label><select class="input" id="m_tipe" name="tipe" style="width:100%">' +
+            '<option value="Student"' + (teacher ? '' : ' selected') + '>Student</option><option value="Teacher"' + (teacher ? ' selected' : '') + '>Teacher</option></select></div>' +
+          '<div class="field full"><label for="m_nama">Full name *</label><input class="input" id="m_nama" name="nama" value="' + UI.esc(m.nama || '') + '" required></div>' +
+          '<div class="field"><label for="m_nis" id="lbl_nis">ID number (NIS) *</label><input class="input" id="m_nis" name="nis" value="' + UI.esc(m.nis || '') + '" required></div>' +
+          '<div class="field"><label for="m_kelas" id="lbl_kelas">Class</label><input class="input" id="m_kelas" name="kelas" value="' + UI.esc(m.kelas || '') + '" placeholder="Example: X-A"></div>' +
+          '<div class="field" id="wrap_level"><label for="m_jenjang">Level</label><select class="input" id="m_jenjang" name="jenjang" style="width:100%">' +
+            '<option value="">Choose a level</option>' + opt('JHS') + opt('SHS') + '</select></div>' +
+        '</div>';
+      }
+
+      // Switch labels when the type changes (teachers have an NIP and a subject instead of a class and level)
+      function wireTypeSwitch(dlg) {
+        var sel = dlg.querySelector('#m_tipe');
+        var sync = function () {
+          var t = sel.value === 'Teacher';
+          dlg.querySelector('#lbl_nis').textContent = t ? 'ID number (NIP) *' : 'ID number (NIS) *';
+          dlg.querySelector('#lbl_kelas').textContent = t ? 'Subject / position' : 'Class';
+          dlg.querySelector('#m_kelas').placeholder = t ? 'Example: Mathematics' : 'Example: X-A';
+          dlg.querySelector('#wrap_level').hidden = t;
+          if (t) dlg.querySelector('#m_jenjang').value = '';
+        };
+        sel.addEventListener('change', sync);
+        sync();
+      }
+
+      async function openForm(m) {
+        var ok = await Admin.modal({
+          title: m ? 'Edit member' : 'Add member', narrow: true,
+          submit: m ? 'Save changes' : 'Save member',
+          html: formHtml(m),
+          onOpen: wireTypeSwitch,
+          onSubmit: async function (data) {
+            if (m) {
+              data.id = m.id;
+              var upd = await API.post('updateMember', data);
+              upd.pinjaman_aktif = m.pinjaman_aktif;
+              upd.status = m.status;
+              upd.type = upd.tipe === 'Teacher' ? 'Teacher' : 'Student';
+              members = members.map(function (x) { return x.id === upd.id ? upd : x; });
+            } else {
+              var nw = await API.post('createMember', data);
+              nw.pinjaman_aktif = 0;
+              nw.type = nw.tipe === 'Teacher' ? 'Teacher' : 'Student';
+              members.push(nw);
+            }
+            members.sort(byName);
+          }
+        });
+        if (ok) { UI.toast(m ? 'Changes saved' : 'Member added', 'success'); render(); }
+      }
+
+      async function askArchive(m) {
+        var ok = await Admin.confirm({
+          title: 'Archive this member?', submit: 'Archive member',
+          text: '<strong>' + UI.esc(m.nama) + '</strong> will be moved to the archive and can no longer borrow or reserve books. Their history is kept, and you can restore them later.',
+          action: async function () {
+            await API.post('archiveMember', { id: m.id, year: new Date().getFullYear() });
+            members = members.filter(function (x) { return x.id !== m.id; });
+          }
+        });
+        if (ok) { UI.toast('Member archived', 'success'); render(); }
+      }
+
+      async function askRestore(m) {
+        var ok = await Admin.confirm({
+          title: 'Restore this member?', submit: 'Restore member',
+          text: '<strong>' + UI.esc(m.nama) + '</strong> will become an active member again.',
+          action: async function () {
+            await API.post('restoreMember', { id: m.id });
+            members = members.filter(function (x) { return x.id !== m.id; });
+          }
+        });
+        if (ok) { UI.toast('Member restored', 'success'); render(); }
+      }
+
+      async function askDelete(m) {
+        var ok = await Admin.confirm({
+          title: 'Delete this member?', submit: 'Delete member', danger: true,
+          text: '<strong>' + UI.esc(m.nama) + '</strong> (' + UI.esc(m.nis) + ') will be removed permanently. Their past loan records stay in the Loans sheet, but will show no name. Archiving is usually the better choice.',
+          action: async function () {
+            await API.post('deleteMember', { id: m.id });
+            members = members.filter(function (x) { return x.id !== m.id; });
+          }
+        });
+        if (ok) { UI.toast('Member deleted', 'success'); render(); }
+      }
+
+      // ----- CSV import -----
+      var ALIASES = {
+        nis: ['nis', 'nip', 'id number', 'student_id', 'student id', 'id'], nama: ['name', 'nama', 'full name'],
+        kelas: ['class', 'kelas', 'subject', 'class / subject'], jenjang: ['level', 'jenjang'], tipe: ['type', 'tipe', 'role']
+      };
+      var ORDER = ['nis', 'nama', 'kelas', 'jenjang', 'tipe'];
+
+      function membersFromRows(rows) {
+        if (!rows.length) return [];
+        var head = rows[0].map(function (x) { return String(x).trim().toLowerCase(); });
+        var idx = {}, hasHead = false;
+        ORDER.forEach(function (k) {
+          for (var i = 0; i < ALIASES[k].length; i++) {
+            var pos = head.indexOf(ALIASES[k][i]);
+            if (pos > -1) { idx[k] = pos; if (k === 'nis') hasHead = true; break; }
+          }
+        });
+        if (!hasHead) { idx = {}; ORDER.forEach(function (k, i) { idx[k] = i; }); }
+        return rows.slice(hasHead ? 1 : 0).map(function (r) {
+          var o = {};
+          ORDER.forEach(function (k) { o[k] = idx[k] !== undefined && r[idx[k]] !== undefined ? String(r[idx[k]]).trim() : ''; });
+          return o;
+        });
+      }
+
+      async function openImport() {
+        var parsed = [], summary = null;
+        var ok = await Admin.modal({
+          title: 'Import members from CSV', submit: 'Import now',
+          html: '<div class="field"><label for="csvFile">CSV file</label>' +
+            '<input class="input" id="csvFile" type="file" accept=".csv,.txt,text/csv" style="padding-top:9px"></div>' +
+            '<p class="hint" style="margin-top:10px">Columns: <b>nis, name, class, level, type</b>. Level is JHS or SHS, and type is <b>student</b> (default) or <b>teacher</b>. ' +
+            'For teachers, use the nis column for the NIP and the class column for the subject. Comma or semicolon separated. ' +
+            'Format the ID column as text in Excel so leading zeros are kept. People whose ID already exists are skipped. ' +
+            '<a class="link" id="tplLink" download="members-template.csv" href="#">Download template</a></p>' +
+            '<div class="preview-note" id="csvInfo" hidden></div>',
+          onOpen: function (dlg) {
+            var blob = new Blob(['\uFEFFnis,name,class,level,type\n2024001,Aisyah Putri,X-A,SHS,student\n2024002,Budi Santoso,IX-B,JHS,student\n198001012005011001,Andi Pratama,Mathematics,,teacher\n'], { type: 'text/csv' });
+            dlg.querySelector('#tplLink').href = URL.createObjectURL(blob);
+            dlg.querySelector('#csvFile').addEventListener('change', async function () {
+              var info = dlg.querySelector('#csvInfo');
+              parsed = [];
+              if (!this.files[0]) { info.hidden = true; return; }
+              try {
+                parsed = membersFromRows(UI.parseCSV(await this.files[0].text()));
+                info.textContent = parsed.length
+                  ? parsed.length + ' rows ready to import. First row: ' + (parsed[0].nama || '(no name)') + ', ID ' + (parsed[0].nis || '(empty)') + '.'
+                  : 'The file contains no member rows.';
+              } catch (e) { info.textContent = 'The file could not be read.'; }
+              info.hidden = false;
+            });
+          },
+          onSubmit: async function () {
+            if (!parsed.length) throw new Error('Choose a CSV file with member rows first.');
+            summary = { added: 0, skipped: 0, failed: 0, errors: [] };
+            for (var i = 0; i < parsed.length; i += 500) {
+              var r = await API.post('importMembers', { rows: parsed.slice(i, i + 500) });
+              summary.added += r.added; summary.skipped += r.skipped; summary.failed += r.failed;
+              summary.errors = summary.errors.concat((r.errors || []).map(function (m) {
+                return m.replace(/^Row (\d+)/, function (_, n) { return 'Row ' + (Number(n) + i); });
+              }));
+            }
+          }
+        });
+        if (!ok) return;
+        if (tab !== 'active') setTab('active'); else await loadAll();
+        UI.toast(summary.added + ' members added, ' + summary.skipped + ' skipped because the ID already exists', 'success');
+        if (summary.failed) {
+          Admin.modal({
+            title: summary.failed + ' rows could not be imported', narrow: true, submit: 'Got it', onSubmit: async function () {},
+            html: '<p>Fix these rows in the CSV file and import again (rows that already worked will be skipped).</p><ul class="err-list">' +
+              summary.errors.map(function (m) { return '<li>' + UI.esc(m) + '</li>'; }).join('') + '</ul>'
+          });
+        }
+      }
+
+      // ----- Events -----
+      function setTab(t) {
+        tab = t; page = 1;
+        Array.prototype.forEach.call($('seg').querySelectorAll('button'), function (b) {
+          b.setAttribute('aria-pressed', String(b.getAttribute('data-s') === tab));
+        });
+        $('addBtn').hidden = tab !== 'active';
+        $('importBtn').hidden = tab !== 'active';
+        return loadAll();
+      }
+      $('seg').addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-s]');
+        if (b && b.getAttribute('data-s') !== tab) setTab(b.getAttribute('data-s'));
+      });
+      $('addBtn').onclick = function () { openForm(); };
+      $('importBtn').onclick = openImport;
+      $('rows').addEventListener('click', function (ev) {
+        var btn = ev.target.closest('[data-act]');
+        if (!btn) return;
+        var id = btn.getAttribute('data-id');
+        var m = members.filter(function (x) { return x.id === id; })[0];
+        if (!m) return;
+        var act = btn.getAttribute('data-act');
+        if (act === 'hist') Admin.showMemberHistory(id);
+        else if (act === 'edit') openForm(m);
+        else if (act === 'archive') askArchive(m);
+        else if (act === 'restore') askRestore(m);
+        else askDelete(m);
+      });
+      $('q').addEventListener('input', UI.debounce(function () { q = $('q').value.trim(); page = 1; render(); }, 200));
+      $('jen').addEventListener('change', function () { jen = this.value; page = 1; render(); });
+      $('typ').addEventListener('change', function () { typ = this.value; page = 1; render(); });
+      $('prev').onclick = function () { page--; render(); };
+      $('next').onclick = function () { page++; render(); };
+
+      async function loadAll() {
+        var id = ++reqId;
+        loading = true; members = []; render();
+        try {
+          var data = await API.post('listMembers', { status: tab });
+          if (id !== reqId) return;
+          members = data; loading = false; render();
+        } catch (e) {
+          if (id !== reqId) return;
+          loading = false;
+          $('rows').innerHTML = ''; $('foot').hidden = true;
+          $('empty').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The member list could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('retry').onclick = loadAll;
+        }
+      }
+      loadAll();
+    })();
+  </script>
+</body>
+</html>

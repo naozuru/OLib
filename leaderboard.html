@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Reading Stars - School Library</title>
+  <meta name="description" content="Reader of the month, top readers and the class reading challenge.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="assets/css/style.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="assets/js/theme.js"></script>
+</head>
+<body>
+  <header class="site-header" id="site-header"></header>
+
+  <main>
+    <div class="wrap">
+      <div class="page-head">
+        <h1>Reading stars</h1>
+        <p>Celebrating the readers and classes who keep the pages turning. A book counts as read when it is returned.</p>
+      </div>
+
+      <div class="notice warn" id="preview" hidden style="max-width:760px">
+        <iconify-icon icon="lucide:eye" width="22" height="22" aria-hidden="true"></iconify-icon>
+        <span>Admin preview: full names are shown. Students see this page only when you switch it on in Settings, and with shortened names unless you turn that off.</span>
+      </div>
+
+      <div style="margin:18px 0 0">
+        <div class="seg" id="seg" role="group" aria-label="Period">
+          <button type="button" data-p="month" aria-pressed="true">This month</button>
+          <button type="button" data-p="last_month" aria-pressed="false">Last month</button>
+          <button type="button" data-p="year" aria-pressed="false">This school year</button>
+        </div>
+      </div>
+
+      <div id="board" aria-live="polite"></div>
+    </div>
+  </main>
+
+  <footer class="site-footer" id="site-footer"></footer>
+
+  <script src="assets/js/config.js"></script>
+  <script src="assets/js/api.js"></script>
+  <script src="assets/js/i18n.js"></script>
+  <script src="assets/js/ui.js"></script>
+  <script>
+    (function () {
+      UI.mountChrome('stars');
+      var $ = function (id) { return document.getElementById(id); };
+      var period = 'month', reqId = 0;
+
+      var PERIOD_TITLE = { month: 'This month', last_month: 'Last month', year: 'This school year' };
+      var WINNER_TITLE = { month: 'Reader of the month (so far)', last_month: 'Reader of last month', year: 'Reader of the school year' };
+
+      function books(n) { return n + (n === 1 ? ' book' : ' books'); }
+
+      // Admins who are signed in see the full-name preview, everyone else gets the public version
+      async function fetchBoard(p) {
+        if (API.getToken()) {
+          try { var d = await API.post('leaderboardAdmin', { period: p }); d.preview = true; return d; }
+          catch (e) { /* session ended: fall back to the public view */ }
+        }
+        return API.get('leaderboard', { period: p }, 60);
+      }
+
+      function rankRow(r, withLevel) {
+        return '<div class="rank-row"><span class="rank' + (r.rank <= 3 ? ' r' + r.rank : '') + '">' + r.rank + '</span>' +
+          '<div class="grow"><b>' + UI.esc(r.name) + '</b>' + (r.kelas ? '<small>' + UI.esc(r.kelas) + '</small>' : '') + '</div>' +
+          (withLevel && r.level ? '<span class="badge">' + UI.esc(r.level) + '</span>' : '') +
+          '<span class="count">' + books(r.count) + '</span></div>';
+      }
+
+      function classRow(c, target) {
+        var bar = c.goal_pct === null ? '' :
+          '<div class="progress' + (c.goal_reached ? ' done' : '') + '" role="img" aria-label="' + c.goal_pct + ' percent of the class goal"><i style="width:' + Math.max(c.goal_pct, 3) + '%"></i></div>';
+        return '<div class="class-row"><div class="top"><span><span class="rank' + (c.rank <= 3 ? ' r' + c.rank : '') + '" style="display:inline-grid;margin-right:10px">' + c.rank + '</span><b>' +
+          UI.esc(c.name) + '</b></span>' + (c.goal_reached ? '<span class="badge ok">Goal reached</span>' : '') + '</div>' +
+          '<small>' + c.per_student + ' books per student (' + books(c.count) + ' from ' + c.students + (c.students === 1 ? ' student' : ' students') + ')</small>' + bar + '</div>';
+      }
+
+      function render(d) {
+        $('preview').hidden = !d.preview;
+        if (!d.enabled) {
+          $('board').innerHTML = UI.state({
+            icon: 'trophy', title: 'Reading stars is not open yet',
+            text: 'The librarian has not switched on the reading leaderboard. Keep reading and check back soon!'
+          });
+          return;
+        }
+        var html = '<p class="result-meta" style="margin-top:18px">' + PERIOD_TITLE[d.period] + ': ' + UI.fmtDate(d.from) + ' to ' + UI.fmtDate(d.to) + '</p>';
+
+        if (!d.totals.books) {
+          $('board').innerHTML = html + UI.state({
+            icon: 'book-open', title: 'No books returned in this period yet',
+            text: 'Borrow a book, read it, and bring it back to be the first one on the board!'
+          });
+          return;
+        }
+
+        var names = d.winners.map(function (w) { return UI.esc(w.name); }).join(' & ');
+        var w0 = d.winners[0];
+        html += '<div class="winner"><div class="trophy-ic">' + UI.icon('trophy', 30) + '</div><div><h2>' + WINNER_TITLE[d.period] + '</h2>' +
+          '<div class="names">' + names + '</div>' +
+          '<p class="muted-text">' + books(w0.count) + (w0.kelas && d.winners.length === 1 ? ', ' + UI.esc(w0.kelas) : '') +
+          (d.winners.length > 1 ? ' each' : '') + '</p></div></div>';
+
+        html += '<p class="result-meta" style="margin:14px 0 0">' + books(d.totals.books) + ' returned by ' + d.totals.readers + (d.totals.readers === 1 ? ' reader' : ' readers') + '.</p>';
+
+        html += '<div class="board-grid">';
+        html += '<section class="panel"><h2>Top readers</h2>' + (d.students.length ? d.students.map(function (r) { return rankRow(r, true); }).join('') : '<p class="muted-text">No student readers yet.</p>') + '</section>';
+        var cls = '<section class="panel"><h2>Class reading challenge</h2>' +
+          (d.target_per_student ? '<p class="muted-text" style="margin-bottom:6px">Goal: ' + d.target_per_student + (d.target_per_student === 1 ? ' book' : ' books') + ' per student this month. Classes are ranked by books per student, so every class has a fair chance.</p>'
+            : '<p class="muted-text" style="margin-bottom:6px">Classes are ranked by books per student, so every class has a fair chance.</p>') +
+          (d.classes.length ? d.classes.map(function (c) { return classRow(c, d.target_per_student); }).join('') : '<p class="muted-text">No classes on the board yet.</p>') + '</section>';
+        html += cls;
+        if (d.teachers.length) {
+          html += '<section class="panel"><h2>Reading teachers</h2>' + d.teachers.map(function (r) { return rankRow(r, false); }).join('') + '</section>';
+        }
+        html += '<section class="panel"><h2>Reading levels</h2><p class="muted-text" style="margin-bottom:10px">Return books to level up. Your level counts every book you have ever returned.</p><div class="legend">' +
+          d.levels.map(function (l) { return '<div>' + UI.icon('award', 20) + '<b>' + UI.esc(l.name) + '</b><span class="muted-text">' + books(l.min) + '</span></div>'; }).join('') +
+          '</div></section>';
+        html += '</div>';
+        $('board').innerHTML = html;
+      }
+
+      async function load() {
+        var id = ++reqId;
+        $('board').innerHTML = '<div class="skeleton" style="height:96px;margin-top:18px;border-radius:16px"></div>' +
+          '<div class="skeleton" style="height:260px;margin-top:16px;border-radius:14px"></div>';
+        try {
+          var d = await fetchBoard(period);
+          if (id !== reqId) return;
+          render(d);
+        } catch (e) {
+          if (id !== reqId) return;
+          $('board').innerHTML = UI.state({
+            icon: API.ready() ? 'wifi-off' : 'settings', title: 'Reading stars could not be loaded', text: e.message,
+            action: API.ready() ? '<button class="btn btn-soft" id="retry" type="button">Try again</button>' : ''
+          });
+          if ($('retry')) $('retry').onclick = load;
+        }
+      }
+
+      $('seg').addEventListener('click', function (ev) {
+        var b = ev.target.closest('[data-p]');
+        if (!b || b.getAttribute('data-p') === period) return;
+        period = b.getAttribute('data-p');
+        Array.prototype.forEach.call($('seg').querySelectorAll('button'), function (x) {
+          x.setAttribute('aria-pressed', String(x.getAttribute('data-p') === period));
+        });
+        load();
+      });
+
+      load();
+    })();
+  </script>
+</body>
+</html>

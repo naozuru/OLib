@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Settings - Library Admin</title>
+  <meta name="robots" content="noindex">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../assets/css/style.css">
+  <link rel="stylesheet" href="../assets/css/admin.css">
+  <script src="https://code.iconify.design/iconify-icon/2.1.0/iconify-icon.min.js" defer></script>
+  <script src="../assets/js/theme.js"></script>
+</head>
+<body>
+  <div class="admin">
+    <aside class="sidebar" id="sidebar"></aside>
+    <div class="admin-main">
+      <header class="topbar" id="topbar"></header>
+      <main class="admin-content">
+        <div class="stack">
+          <form class="panel" id="rulesForm">
+            <h2 class="section-title">Loan and reservation rules</h2>
+            <p class="sub">These apply to new loans and reservations. Loans that are already running do not change.</p>
+            <div class="form-grid" id="rulesFields">
+              <div class="skeleton full" style="height:44px"></div>
+              <div class="skeleton full" style="height:44px"></div>
+            </div>
+            <div class="form-error" id="rulesError" hidden></div>
+            <div class="form-actions"><button class="btn btn-primary" id="rulesBtn" type="submit" disabled>Save rules</button></div>
+          </form>
+
+          <form class="panel" id="pwForm">
+            <h2 class="section-title">Change password</h2>
+            <p class="sub">Choose a password that is hard to guess, at least 6 characters.</p>
+            <div class="form-grid">
+              <div class="field full"><label for="pw_old">Current password</label>
+                <input class="input" id="pw_old" name="password_lama" type="password" autocomplete="current-password" required></div>
+              <div class="field"><label for="pw_new">New password</label>
+                <input class="input" id="pw_new" name="password_baru" type="password" autocomplete="new-password" minlength="6" required></div>
+              <div class="field"><label for="pw_conf">Repeat new password</label>
+                <input class="input" id="pw_conf" type="password" autocomplete="new-password" minlength="6" required></div>
+            </div>
+            <div class="form-error" id="pwError" hidden></div>
+            <div class="form-actions"><button class="btn btn-primary" id="pwBtn" type="submit">Change password</button></div>
+          </form>
+        </div>
+      </main>
+    </div>
+  </div>
+  <div class="scrim" id="scrim"></div>
+
+  <script src="../assets/js/config.js"></script>
+  <script src="../assets/js/api.js"></script>
+  <script src="../assets/js/ui.js"></script>
+  <script src="../assets/js/admin.js"></script>
+  <script>
+    (function () {
+      if (!Admin.guard()) return;
+      Admin.mountShell('settings', 'Settings');
+      var $ = function (id) { return document.getElementById(id); };
+
+      var FIELDS = [
+        { k: 'durasi_pinjam_default', label: 'Default loan length (days)', min: 1, max: 90 },
+        { k: 'maks_buku_per_siswa', label: 'Maximum books per student', min: 1, max: 20 },
+        { k: 'maks_buku_guru', label: 'Maximum books per teacher', min: 1, max: 50 },
+        { k: 'durasi_pinjam_guru', label: 'Default loan length for teachers (days)', min: 1, max: 90 },
+        { k: 'maks_perpanjangan', label: 'Maximum extensions per loan', min: 0, max: 10 },
+        { k: 'durasi_perpanjangan', label: 'Days added per extension', min: 1, max: 90 },
+        { k: 'hampir_jatuh_tempo_hari', label: 'Mark "due soon" this many days before', min: 0, max: 14 },
+        { k: 'denda_per_hari', label: 'Fine per late day for students (Rp)', min: 0, max: 1000000, hint: 'Enter 0 if the library does not charge fines. Teachers are never fined.' },
+        { k: 'maks_reservasi', label: 'Maximum active reservations per member', min: 0, max: 10, hint: 'Enter 0 to switch reservations off.' },
+        { k: 'masa_tahan_reservasi_hari', label: 'Days a reserved copy is held for pickup', min: 1, max: 30 },
+        { k: 'buku_baru_hari', label: 'Show the "New" tag for this many days', min: 1, max: 365 },
+        { k: 'papan_peringkat_publik', label: 'Reading stars visible to students', toggle: true, hint: 'When off, only admins can open the page (full names, as a preview).' },
+        { k: 'peringkat_nama_singkat', label: 'Shorten student names on Reading stars', toggle: true, hint: 'Shows "Aisyah P." instead of the full name. Recommended while the site is public.' },
+        { k: 'tantangan_target_per_siswa', label: 'Class challenge goal (books per student per month)', min: 1, max: 20 },
+        { k: 'tahun_ajaran_mulai_bulan', label: 'Month the school year starts (1 to 12)', min: 1, max: 12, hint: '7 means July.' }
+      ];
+
+      function showError(id, msg) { $(id).textContent = msg; $(id).hidden = !msg; }
+
+      function renderRules(s) {
+        $('rulesFields').innerHTML = FIELDS.map(function (f) {
+          if (f.toggle) {
+            var on = Number(s[f.k]) ? 1 : 0;
+            return '<div class="field"><label for="s_' + f.k + '">' + f.label + '</label>' +
+              '<select class="input" id="s_' + f.k + '" name="' + f.k + '" style="width:100%">' +
+              '<option value="1"' + (on ? ' selected' : '') + '>Yes</option><option value="0"' + (on ? '' : ' selected') + '>No</option></select>' +
+              (f.hint ? '<span class="hint">' + f.hint + '</span>' : '') + '</div>';
+          }
+          return '<div class="field"><label for="s_' + f.k + '">' + f.label + '</label>' +
+            '<input class="input" id="s_' + f.k + '" name="' + f.k + '" type="number" min="' + f.min + '" max="' + f.max + '" value="' + UI.esc(s[f.k]) + '" required>' +
+            (f.hint ? '<span class="hint">' + f.hint + '</span>' : '') + '</div>';
+        }).join('');
+        $('rulesBtn').disabled = false;
+      }
+
+      async function loadRules() {
+        try {
+          renderRules(await API.post('getSettings'));
+        } catch (e) {
+          $('rulesFields').innerHTML = UI.state({
+            icon: 'wifi-off', title: 'The settings could not be loaded', text: e.message,
+            action: '<button class="btn btn-soft" id="retry" type="button">Try again</button>'
+          });
+          $('retry').onclick = loadRules;
+        }
+      }
+
+      $('rulesForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        showError('rulesError', '');
+        var btn = $('rulesBtn'), label = btn.textContent;
+        btn.disabled = true; btn.textContent = 'Saving...';
+        try {
+          var data = Object.fromEntries(new FormData(this));
+          renderRules(await API.post('updateSettings', data));
+          UI.toast('Rules saved', 'success');
+        } catch (e) {
+          showError('rulesError', e.message);
+        } finally {
+          btn.disabled = false; btn.textContent = label;
+        }
+      });
+
+      $('pwForm').addEventListener('submit', async function (ev) {
+        ev.preventDefault();
+        showError('pwError', '');
+        if ($('pw_new').value !== $('pw_conf').value) { showError('pwError', 'The new password and its repeat do not match.'); return; }
+        if ($('pw_new').value === $('pw_old').value) { showError('pwError', 'The new password must be different from the current one.'); return; }
+        var btn = $('pwBtn'), label = btn.textContent;
+        btn.disabled = true; btn.textContent = 'Saving...';
+        try {
+          await API.post('changePassword', { password_lama: $('pw_old').value, password_baru: $('pw_new').value });
+          this.reset();
+          try { sessionStorage.removeItem('lib_default_pw'); } catch (e) { /* ignore */ }
+          UI.toast('Password changed', 'success');
+        } catch (e) {
+          showError('pwError', e.message);
+        } finally {
+          btn.disabled = false; btn.textContent = label;
+        }
+      });
+
+      loadRules();
+    })();
+  </script>
+</body>
+</html>
